@@ -1,0 +1,103 @@
+Securing Communication Within Istio
+Prerequisites
+Verify you're in the correct folder for this lab: /root/istio-workshops/istio-basics. This lab builds on earlier work where you added your services to the mesh.
+
+cd /root/istio-workshops/istio-basics
+Permissive mode
+ 1.  Check if you have a peerauthentication policy in any of your namespaces:
+
+kubectl get peerauthentication --all-namespaces
+Enable strict mTLS
+ 2.  Execute this command to define a default policy for the istio-system namespace that updates all of the servers to accept only mTLS traffic:
+
+kubectl apply -n istio-system -f - <<EOF
+apiVersion: "security.istio.io/v1beta1"
+kind: "PeerAuthentication"
+metadata:
+ name: "default"
+spec:
+ mtls:
+   mode: STRICT
+EOF
+ 3.  Verify your peerauthentication policy is installed:
+
+kubectl get peerauthentication --all-namespaces
+mTLS in Action
+ 4.  Send some traffic to web-api from a pod that is not part of the Istio service mesh. Deploy the sleep service and pod in the default namespace:
+
+kubectl apply -n default -f sample-apps/sleep.yaml
+ 5.  Access the web-api service from the sleep pod in the default namespace. This should fail.
+
+kubectl exec deploy/sleep -n default -- curl http://web-api.istioinaction:8080/
+ 6.  Run the same command from the sleep pod in the istioinaction namespace:
+
+kubectl exec deploy/sleep -n istioinaction -- curl http://web-api.istioinaction:8080/
+Visualize mTLS enforcement in Kiali
+ 7.  Generate some load to the data plane (by calling our web-api service) so that you can observe interactions among your services:
+
+for i in {1..200};
+  do curl --cacert ./labs/02/certs/ca/root-ca.crt -H "Host: istioinaction.io" https://istioinaction.io:$SECURE_INGRESS_PORT  --resolve istioinaction.io:$SECURE_INGRESS_PORT:$GATEWAY_IP;
+  sleep 3;
+done
+ 8.  From Terminal 2, enable access to Kiali using the command below:
+
+istioctl dashboard kiali --browser=false --address 0.0.0.0
+Understand how mTLS works in Istio service mesh
+ 9.  Inspect the key and/or certificates used by Istio for the web-api service in the istioinaction namespace:
+
+istioctl proxy-config secret deploy/web-api -n istioinaction
+ 10.  Check the issuer of the public certificate:
+
+istioctl proxy-config secret deploy/web-api -n istioinaction -o json | jq '[.dynamicActiveSecrets[] | select(.name == "default")][0].secret.tlsCertificate.certificateChain.inlineBytes' -r | base64 -d | openssl x509 -noout -text | grep 'Issuer'
+ 11.  Check if the public certificate in the default secret is valid:
+
+istioctl proxy-config secret deploy/web-api -n istioinaction -o json | jq '[.dynamicActiveSecrets[] | select(.name == "default")][0].secret.tlsCertificate.certificateChain.inlineBytes' -r | base64 -d | openssl x509 -noout -text | grep 'Validity' -A 2
+You should see the public certificate is valid and expires in 24 hours.
+
+ 12.  Validate the identity of the client certificate is correct:
+
+istioctl proxy-config secret deploy/web-api -n istioinaction -o json | jq '[.dynamicActiveSecrets[] | select(.name == "default")][0].secret.tlsCertificate.certificateChain.inlineBytes' -r | base64 -d | openssl x509 -noout -text | grep 'Subject Alternative Name' -A 1
+The SPIFFE Format
+ 13.  Check the istio configmap in the istio-system namespace:
+
+kubectl get cm istio -n istio-system -o yaml | grep trustDomain -m 1
+ 14.  Review the sample-apps/web-api.yaml file to see the web-api service account:
+
+cat sample-apps/web-api.yaml | grep ServiceAccount -A 3
+ 15.  Earlier, you reviewed the injected istio-proxy container for the web-api pod. Recall there are a few volumes mounted to the istio-proxy container.
+
+       volumeMounts`
+       - mountPath: /var/run/secrets/istio
+         name: istiod-ca-cert
+       - mountPath: /var/lib/istio/data
+         name: istio-data
+       - mountPath: /etc/istio/proxy
+         name: istio-envoy
+       - mountPath: /var/run/secrets/tokens
+         name: istio-token
+       - mountPath: /etc/istio/pod
+         name: istio-podinfo
+       - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+         name: web-api-token-ztk5d
+         readOnly: true
+ ...
+     - name: istio-token
+       projected:
+         defaultMode: 420
+         sources:
+         - serviceAccountToken:
+             audience: istio-ca
+             expirationSeconds: 43200
+             path: istio-token
+     - configMap:
+         defaultMode: 420
+         name: istio-ca-root-cert
+       name: istiod-ca-cert
+     - name: web-api-token-ztk5d
+       secret:
+         defaultMode: 420
+         secretName: web-api-token-ztk5d
+Strict mTLS
+ 16.  Use the command below to view the configuration for the istio-proxy container of the web-api pod:
+
+istioctl proxy-config all deploy/web-api -n istioinaction -o json
