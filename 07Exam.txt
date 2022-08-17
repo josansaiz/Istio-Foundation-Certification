@@ -1,0 +1,120 @@
+
+In which way(s) can Istio be installed?
+
+ 
+
+ Helm
+ Istioctl
+ Istio Operator
+X All of the Above
+Question 2:  Correct answer
+
+
+Which Istio Custom Resource helps you expose your applications to uses outside of your cluster?
+
+ 
+
+ Sidecar
+X Gateway
+ ServiceEntry
+ DestinationRule
+Question 3:  Correct answer
+
+
+Labeling your namespace with 'istio-injection=enabled' will enable sidecars on your application pods.
+
+ 
+
+X True
+ False
+Question 4:  Correct answer
+
+
+After you label a namespace for Instio injection, sidecars will automatically be deployed to your existing pods.
+
+ 
+
+ True
+X False
+Question 5:  Correct answer
+
+
+What is the name of the Istio sidecar container that is added to your application?
+
+ 
+
+ istiod
+ nginx
+ gateway
+X istio-proxy
+Question 6:  Correct answer
+
+
+What is the name of the UI that helps you view Istio configuration, application traffic, and metrics?
+
+ 
+
+X Kiali
+ Jaeger
+ Grafana
+ Prometheus
+Question 7:  Correct answer
+
+
+What does setting mtls.mode=STRICT on a PeerAuthentication do?
+
+ 
+
+ Enables communication from the Istio IngressGateway to your application
+ Allows applications without Istio sidecars to call applications with them
+X Allows only secure authenticated communication between applications
+ Denies all traffic communications between applications
+Question 8:  Correct answer
+
+
+Adding a PeerAuthentication to the istio-system namespace (or your Istio root namespace if different than the istio-system namespace) will apply to all Istio enabled applications.
+
+ 
+
+X True
+ False
+Question 9:  Correct answer
+
+
+What does a virtual service do?
+
+ 
+
+ It enables adding additional entries into Istio's internal service registry so auto-discovered services in the mesh can access/route to these manually specified services.
+X It defines a set of traffic routing rules to apply when a host is addressed. Each routing rule defines matching criteria for traffic of a specified protocol.
+ It defines policies that apply to traffic intended for a service after routing has occurred.
+ It enables access control on workloads in the mesh.
+Question 10:  Correct answer
+
+
+Istio can make your applications more resilient to failures with which of the following features?
+
+ 
+
+X Retries
+X Timeouts
+X Circuit Breakers
+ Authorization Policies
+Question 11:  Incorrect answer
+
+
+Istio can restrict which upstream applications a given application can call. 
+
+ 
+
+--> True
+ False
+Question 12:  Correct answer
+
+
+Solo.io can help you adopt Istio via its enterprise support or multi-cluster Istio offering, Gloo Mesh. 
+
+ 
+
+X True
+ False

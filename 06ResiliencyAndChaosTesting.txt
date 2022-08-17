@@ -1,0 +1,218 @@
+Retries
+Retries
+ 1.  Display the content of the purchase-history-vs-all-v2-v3-retries.yaml:
+
+cat labs/05/purchase-history-vs-all-v2-v3-retries.yaml
+
+	apiVersion: networking.istio.io/v1beta1
+	kind: VirtualService
+	metadata:
+	  name: purchase-history-vs
+	spec:
+	  hosts:
+	  - purchase-history.istioinaction.svc.cluster.local
+	  http:
+	  - match:
+		- headers:
+			user:
+			  exact: Tom
+		route:
+		- destination:
+			host: purchase-history.istioinaction.svc.cluster.local
+			subset: v3
+			port:
+			  number: 8080
+		retries:
+		  attempts: 0
+	  - route:
+		- destination:
+			host: purchase-history.istioinaction.svc.cluster.local
+			subset: v2
+			port:
+			  number: 8080
+		  weight: 100
+ 2.  Apply the virtual service resource to the istioinaction namespace, along with the updated purchase-history destination rule that contains the v3 subset:
+
+kubectl apply -f labs/05/purchase-history-vs-all-v2-v3-retries.yaml -n istioinaction
+kubectl apply -f labs/05/purchase-history-dr-v3.yaml -n istioinaction
+ 3.  Create a new version of the purchase history (v3) which errors 50% of the time with 503 error code and 4 seconds of error delay:
+
+cat labs/05/purchase-history-v3.yaml
+       - name: "ERROR_CODE"
+         value: "503"
+       - name: "ERROR_RATE"
+         value: "0.5"
+       - name: "ERROR_TYPE"
+         value: "delay"
+       - name: "ERROR_DELAY"
+         value: "4s"
+ 4.  Deploy the new version of the purchase history (v3) to the istioinaction namespace:
+
+kubectl apply -f labs/05/purchase-history-v3.yaml -n istioinaction
+ 5.  Generate some load with the user: Tom header to ensure traffic goes 100% to v3 of the purchase-history service. You will quickly see errors from the v3 of the purchase-history service:
+
+for i in {1..6}; do kubectl exec deploy/sleep -n istioinaction -- curl -s -H "user: Tom" http://purchase-history:8080/; done
+Retries in Kiali
+ 6.  To look at traffic in the Kiali UI, run the following command in Terminal 2:
+
+istioctl dashboard kiali --browser=false --address 0.0.0.0
+Click on the Kiali UI tab, and you should be able to view the Kiali UI. Navigate to the Graph Tab and select the istioinaction namespace.
+
+cat labs/05/purchase-history-vs-all-v2-header-v3.yaml
+
+	apiVersion: networking.istio.io/v1beta1
+	kind: VirtualService
+	metadata:
+	  name: purchase-history-vs
+	spec:
+	  hosts:
+	  - purchase-history.istioinaction.svc.cluster.local
+	  http:
+	  - match:
+		- headers:
+			user:
+			  exact: Tom
+		route:
+		- destination:
+			host: purchase-history.istioinaction.svc.cluster.local
+			subset: v3
+			port:
+			  number: 8080
+	  - route:
+		- destination:
+			host: purchase-history.istioinaction.svc.cluster.local
+			subset: v2
+			port:
+			  number: 8080
+		  weight: 100
+
+kubectl apply -f labs/05/purchase-history-vs-all-v2-header-v3.yaml -n istioinaction
+ 7.  Generate some load you should NOT see any errors from the v3 of the purchase-history service:
+
+for i in {1..6}; do kubectl exec deploy/sleep -n istioinaction -- curl -s -H "user: Tom" http://purchase-history:8080/; done
+ 8.  Check the logs of the purchase-history service to see the retries:
+
+kubectl logs deploy/purchase-history-v3 -n istioinaction | grep x-envoy-attempt-count
+Timeouts
+ 9.  In the route rule within the purchase-history-vs resource below, you can add the following timeout configuration to set the timeout of the route to the purchase-history service on port 8080, along with three retry attempts with each retry timing out after three seconds:
+
+cat labs/05/purchase-history-vs-all-v2-v3-retries-timeout.yaml
+
+	apiVersion: networking.istio.io/v1beta1
+	kind: VirtualService
+	metadata:
+	  name: purchase-history-vs
+	spec:
+	  hosts:
+	  - purchase-history.istioinaction.svc.cluster.local
+	  http:
+	  - match:
+		- headers:
+			user:
+			  exact: Tom
+		route:
+		- destination:
+			host: purchase-history.istioinaction.svc.cluster.local
+			subset: v3
+			port:
+			  number: 8080
+		retries:
+		  attempts: 3
+		  perTryTimeout: 3s
+		timeout: 6s
+	  - route:
+		- destination:
+			host: purchase-history.istioinaction.svc.cluster.local
+			subset: v2
+			port:
+			  number: 8080
+		  weight: 100
+		  
+ 10.  Apply the resource in the istioinaction namespace:
+
+kubectl apply -f labs/05/purchase-history-vs-all-v2-v3-retries-timeout.yaml -n istioinaction
+ 11.  Send some traffic to the purchase-history service from the sleep pod:
+
+for i in {1..6}; do kubectl exec deploy/sleep -n istioinaction -- curl -s -H "user: Tom" http://purchase-history:8080/|grep timeout; done
+Circuit Breakers
+ 12.  Look at the purchase-history-dr destination rule as shown in the example below. Within the traffic policy of the purchase-history-dr, you can specify the connection pool configuration to indicate the maximum number of TCP connections, show the maximum number of HTTP requests per connection, and set the outlier detection to be three minutes after an error:
+
+cat labs/05/purchase-history-dr-v3-cb.yaml
+
+	apiVersion: networking.istio.io/v1beta1
+	kind: DestinationRule
+	metadata:
+	  name: purchase-history-dr
+	spec:
+	  host: purchase-history.istioinaction.svc.cluster.local
+	  subsets:
+	  - name: v1
+		labels:
+		  version: v1
+	  - name: v2
+		labels:
+		  version: v2
+	  - name: v3
+		labels:
+		  version: v3
+	  trafficPolicy:
+		connectionPool:
+		  tcp:
+			maxConnections: 1
+		  http:
+			http1MaxPendingRequests: 1
+			maxRequestsPerConnection: 1
+		outlierDetection:
+		  consecutive5xxErrors: 1
+		  interval: 1s
+		  baseEjectionTime: 5s
+		  maxEjectionPercent: 100
+
+ 13.  Apply the resource in the istioinaction namespace:
+
+kubectl apply -f labs/05/purchase-history-dr-v3-cb.yaml -n istioinaction
+Fault Injection
+ 14.  Inject a 30-second fault delay for 100% of the client requests when the user HTTP header value exactly matches the value Amy.
+
+cat labs/05/web-api-gw-vs-fault-injection.yaml
+
+	apiVersion: networking.istio.io/v1beta1
+	kind: VirtualService
+	metadata:
+	  name: web-api-gw-vs
+	spec:
+	  hosts:
+	  - "istioinaction.io"
+	  gateways:
+	  - web-api-gateway
+	  http:
+	  - fault:
+		  delay:
+			fixedDelay: 15s
+			percentage:
+			  value: 100
+		match:
+		- headers:
+			user:
+			  exact: Amy
+		route:
+		- destination:
+			host: web-api.istioinaction.svc.cluster.local
+			port:
+			  number: 8080
+	  - route:
+		- destination:
+			host: web-api.istioinaction.svc.cluster.local
+			port:
+			  number: 8080          
+		  
+		  
+ 15.  Apply the virtual service resource using the following command:
+
+kubectl apply -f labs/05/web-api-gw-vs-fault-injection.yaml -n istioinaction
+ 16.  Send some traffic to the web-api service:
+
+curl --cacert ./labs/02/certs/ca/root-ca.crt -H "Host: istioinaction.io" https://istioinaction.io:$SECURE_INGRESS_PORT --resolve istioinaction.io:$SECURE_INGRESS_PORT:$GATEWAY_IP
+ 17.  Send some traffic to the web-api service with the user: Amy header:
+
+curl --cacert ./labs/02/certs/ca/root-ca.crt -H "Host: istioinaction.io" -H "user: Amy" https://istioinaction.io:$SECURE_INGRESS_PORT --resolve istioinaction.io:$SECURE_INGRESS_PORT:$GATEWAY_IP

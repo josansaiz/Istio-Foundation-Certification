@@ -1,0 +1,320 @@
+Control Traffic
+Prerequisites
+Verify you're in the correct folder for this lab: /root/istio-workshops/istio-basics.
+
+This lesson builds on the previous lessons:
+
+cd /root/istio-workshops/istio-basics
+Dark Launch
+ 1.  Check to see that you have v2 of the purchase-history service ready in the labs/05/purchase-history-v2.yaml file:
+
+cat labs/05/purchase-history-v2.yaml
+
+	apiVersion: apps/v1
+	kind: Deployment
+	metadata:
+	  name: purchase-history-v2
+	  labels:
+		app: purchase-history
+		version: v2
+	spec:
+	  replicas: 1
+	  selector:
+		matchLabels:
+			app: purchase-history
+			version: v2
+	  template:
+		metadata:
+		  labels:
+			app: purchase-history
+			version: v2
+		spec:
+		  serviceAccountName: purchase-history    
+		  containers:
+		  - name: purchase-history
+			image: linsun/fake-service:v2
+			ports:
+			- containerPort: 8080
+			env:
+			- name: "LISTEN_ADDR"
+			  value: "0.0.0.0:8080"
+			- name: "NAME"
+			  value: "purchase-history-v2"
+			- name: "SERVER_TYPE"
+			  value: "http"
+			- name: "MESSAGE"
+			  value: "Hello From Purchase History (v2)!"
+			- name: "EXTERNAL_SERVICE_URL"
+			  value: "https://jsonplaceholder.typicode.com/posts"
+			imagePullPolicy: Always
+		
+		
+ 2.  Review the virtual service resource for the purchase-history service that configures all traffic to v1 of the purchase-history service:
+
+cat labs/05/purchase-history-vs-all-v1.yaml
+
+	apiVersion: networking.istio.io/v1beta1
+	kind: VirtualService
+	metadata:
+	  name: purchase-history-vs
+	spec:
+	  hosts:
+	  - purchase-history.istioinaction.svc.cluster.local
+	  http: 
+	  - route:
+		- destination:
+			host: purchase-history.istioinaction.svc.cluster.local
+			subset: v1
+			port:
+			  number: 8080
+		  weight: 100
+	  
+	  
+ 3.  Also review the destination rule resource for the purchase-history service that defines the v1 and v2 subsets. Since v2 is dark-launched and no traffic will go to v2, it is not required to have v2 subsets now but you will need them soon.
+
+cat labs/05/purchase-history-dr.yaml
+
+	apiVersion: networking.istio.io/v1beta1
+	kind: DestinationRule
+	metadata:
+	  name: purchase-history-dr
+	spec:
+	  host: purchase-history.istioinaction.svc.cluster.local
+	  subsets:
+	  - name: v1
+		labels:
+		  version: v1
+	  - name: v2
+		labels:
+		  version: v2
+	  
+	  
+ 4.  Apply the purchase-history-vs and purchase-history-dr resources in the istioinaction namespace:
+
+kubectl apply -f labs/05/purchase-history-vs-all-v1.yaml -n istioinaction
+kubectl apply -f labs/05/purchase-history-dr.yaml -n istioinaction
+ 5.  After you have configured Istio to send 100% of traffic to purchase-history to v1 of the service, you can now deploy the v2 of the purchase-history service:
+
+kubectl apply -f labs/05/purchase-history-v2.yaml -n istioinaction
+ 6.  Confirm the new v2 purchase-history pod is running:
+
+kubectl get pods -n istioinaction -l app=purchase-history
+ 7.  Check the purchase-history-v2 pod logs. You should see some errors:
+
+kubectl logs deploy/purchase-history-v2 -n istioinaction
+ 8.  Generate some load on the web-api service to ensure your users are not impacted by the newly added v2 of the purchase-history service:
+
+for i in {1..10}; do curl -s --cacert ./labs/02/certs/ca/root-ca.crt -H "Host: istioinaction.io" https://istioinaction.io:$SECURE_INGRESS_PORT --resolve istioinaction.io:$SECURE_INGRESS_PORT:$GATEWAY_IP|grep "Hello From Purchase History"; done
+ 9.  Add this configuration to the pod annotation of the purchase-history-v2 and use it:
+
+cat labs/05/purchase-history-v2-updated.yaml
+
+	apiVersion: apps/v1
+	kind: Deployment
+	metadata:
+	  name: purchase-history-v2
+	  labels:
+		app: purchase-history
+		version: v2
+	spec:
+	  replicas: 1
+	  selector:
+		matchLabels:
+			app: purchase-history
+			version: v2
+	  template:
+		metadata:
+		  labels:
+			app: purchase-history
+			version: v2
+		  annotations:
+			proxy.istio.io/config: '{ "holdApplicationUntilProxyStarts": true }'        
+		spec:
+		  serviceAccountName: purchase-history    
+		  containers:
+		  - name: purchase-history
+			image: linsun/fake-service:v2
+			ports:
+			- containerPort: 8080
+			env:
+			- name: "LISTEN_ADDR"
+			  value: "0.0.0.0:8080"
+			- name: "NAME"
+			  value: "purchase-history-v2"
+			- name: "SERVER_TYPE"
+			  value: "http"
+			- name: "MESSAGE"
+			  value: "Hello From Purchase History (v2)!"
+			- name: "EXTERNAL_SERVICE_URL"
+			  value: "https://jsonplaceholder.typicode.com/posts"
+			imagePullPolicy: Always
+		
+ 10.  From the holdApplicationUntilProxyStarts annotation below, you have configured the purchase-history-v2 pod to delay starting until the istio-proxy container reaches its Running status:
+
+  template:
+    metadata:
+      labels:
+        app: purchase-history
+        version: v2
+      annotations:
+        proxy.istio.io/config: '{ "holdApplicationUntilProxyStarts": true }'
+    spec:
+ 11.  Deploy the updated v2 of the purchase-history service:
+
+kubectl apply -f labs/05/purchase-history-v2-updated.yaml -n istioinaction
+ 12.  Check the purchase-history-v2 pod logs to see to ensure there are no errors this time:
+
+kubectl logs deploy/purchase-history-v2 -n istioinaction
+Selectively Route Requests
+ 13.  Review the changes of the purchase-history-vs virtual service resource. Apply the changes to your mesh using this command:
+
+kubectl apply -f labs/05/purchase-history-vs-all-v1-header-v2.yaml -n istioinaction
+ 14.  Send some traffic to the web-api service through the istio-ingressgateway:
+
+curl --cacert ./labs/02/certs/ca/root-ca.crt -H "Host: istioinaction.io" -H "user: jason" https://istioinaction.io:$SECURE_INGRESS_PORT --resolve istioinaction.io:$SECURE_INGRESS_PORT:$GATEWAY_IP
+ 15.  Change the command using user: Jason instead:
+
+curl --cacert ./labs/02/certs/ca/root-ca.crt -H "Host: istioinaction.io" -H "user: Jason" https://istioinaction.io:$SECURE_INGRESS_PORT --resolve istioinaction.io:$SECURE_INGRESS_PORT:$GATEWAY_IP
+Canary Testing 20%
+ 16.  Review the updated purchase-history virtual service resource that shifts 20% of the traffic to v2 of the purchase-history service:
+
+cat labs/05/purchase-history-vs-20-v2.yaml
+
+	apiVersion: networking.istio.io/v1beta1
+	kind: VirtualService
+	metadata:
+	  name: purchase-history-vs
+	spec:
+	  hosts:
+	  - purchase-history.istioinaction.svc.cluster.local
+	  http: 
+	  - route:
+		- destination:
+			host: purchase-history.istioinaction.svc.cluster.local
+			subset: v1
+			port:
+			  number: 8080
+		  weight: 80
+		- destination:
+			host: purchase-history.istioinaction.svc.cluster.local
+			subset: v2
+			port:
+			  number: 8080
+		  weight: 20
+	  
+ 17.  Deploy the updated purchase-history virtual service resource:
+
+kubectl apply -f labs/05/purchase-history-vs-20-v2.yaml -n istioinaction
+ 18.  Generate some load on the web-api service to check how many requests are served by v1 and v2 of the purchase-history service. You should see only a few from v2 while the rest from v1. You may be curious why you are not seeing an exactly 80%/20% distribution among v1 and v2. You may need to have over 100 requests to see this 80%/20% weighted version distribution, but it should balance eventually.
+
+for i in {1..20}; do curl -s --cacert ./labs/02/certs/ca/root-ca.crt -H "Host: istioinaction.io" https://istioinaction.io:$SECURE_INGRESS_PORT --resolve istioinaction.io:$SECURE_INGRESS_PORT:$GATEWAY_IP|grep "Hello From Purchase History"; done
+Canary Testing 50%
+ 19.  Review the updated purchase-history virtual service resource:
+
+cat labs/05/purchase-history-vs-50-v2.yaml
+
+	apiVersion: networking.istio.io/v1beta1
+	kind: VirtualService
+	metadata:
+	  name: purchase-history-vs
+	spec:
+	  hosts:
+	  - purchase-history.istioinaction.svc.cluster.local
+	  http: 
+	  - route:
+		- destination:
+			host: purchase-history.istioinaction.svc.cluster.local
+			subset: v1
+			port:
+			  number: 8080
+		  weight: 50
+		- destination:
+			host: purchase-history.istioinaction.svc.cluster.local
+			subset: v2
+			port:
+			  number: 8080
+		  weight: 50
+	  
+ 20.  Deploy the updated purchase-history virtual service resource:
+
+kubectl apply -f labs/05/purchase-history-vs-50-v2.yaml -n istioinaction
+ 21.  Generate some load on the web-api service to check how many requests are served by v1 and v2 of the purchase-history service. You should observe roughly 50%/50% distribution among the v1 and v2 of the service.
+
+for i in {1..20}; do curl -s --cacert ./labs/02/certs/ca/root-ca.crt -H "Host: istioinaction.io" https://istioinaction.io:$SECURE_INGRESS_PORT --resolve istioinaction.io:$SECURE_INGRESS_PORT:$GATEWAY_IP|grep "Hello From Purchase History"; done
+Canary Testing All Traffic
+ 22.  Deploy the updated purchase-history virtual service resource:
+
+kubectl apply -f labs/05/purchase-history-vs-all-v2.yaml -n istioinaction
+ 23.  Generate some load on the web-api service, you should only see traffic to the v2 of the purchase-history service.
+
+for i in {1..20}; do curl -s --cacert ./labs/02/certs/ca/root-ca.crt -H "Host: istioinaction.io" https://istioinaction.io:$SECURE_INGRESS_PORT --resolve istioinaction.io:$SECURE_INGRESS_PORT:$GATEWAY_IP|grep "Hello From Purchase History"; done
+Controlling Outbound Traffic
+ 24.  Check the default Istio installation configuration for outboundTrafficPolicy:
+
+kubectl get istiooperator installed-state -n istio-system -o jsonpath='{.spec.meshConfig.outboundTrafficPolicy.mode}'
+ 25.  Update your Istio installation so that only registered external services are allowed, using the meshConfig.outboundTrafficPolicy.mode configuration:
+
+istioctl install --set profile=demo --set meshConfig.outboundTrafficPolicy.mode=REGISTRY_ONLY -y
+
+✔ Istio core installed                                                                          
+✔ Istiod installed                                                                              
+✔ Ingress gateways installed                                                                    
+✔ Egress gateways installed                                                                     
+✔ Installation complete                                                                         Thank you for installing Istio 1.10.  Please take a few minutes to tell us about your install/upgrade experience!  https://forms.gle/KjkrDnMPByq7akrYA
+
+
+ 26.  Confirm the new configuration, you should see REGISTRY_ONLY from the output:
+
+kubectl get istiooperator installed-state -n istio-system -o jsonpath='{.spec.meshConfig.outboundTrafficPolicy.mode}'
+ 27.  Send some traffic to the web-api service:
+
+curl --cacert ./labs/02/certs/ca/root-ca.crt -H "Host: istioinaction.io" https://istioinaction.io:$SECURE_INGRESS_PORT --resolve istioinaction.io:$SECURE_INGRESS_PORT:$GATEWAY_IP
+ 28.  Check the pod logs of the purchase-history-v2 pod:
+
+ 29.  Create the following service entry resource for the jsonplaceholder.typicode.com service:
+
+cat labs/05/typicode-se.yaml
+
+	apiVersion: networking.istio.io/v1beta1
+	kind: ServiceEntry
+	metadata:
+	  name: typicode-svc-https
+	spec:
+	  hosts:
+	  - jsonplaceholder.typicode.com
+	  location: MESH_EXTERNAL
+	  ports:
+	  - number: 443
+		name: https
+		protocol: TLS
+	  resolution: DNS
+  
+  
+ 30.  Apply the service entry resource into the istioinaction namespace:
+
+kubectl apply -f labs/05/typicode-se.yaml -n istioinaction
+ 31.  Send some traffic to the web-api service. You should get a 200 response now.
+
+curl --cacert ./labs/02/certs/ca/root-ca.crt -H "Host: istioinaction.io" https://istioinaction.io:$SECURE_INGRESS_PORT --resolve istioinaction.io:$SECURE_INGRESS_PORT:$GATEWAY_IP
+ 32.  You can set a timeout rule on calls to the jsonplaceholder.typicode.com service as shown below:
+
+cat labs/05/typicode-vs.yaml
+
+	apiVersion: networking.istio.io/v1beta1
+	kind: VirtualService
+	metadata:
+	  name: typicode-vs
+	spec:
+	  hosts:
+		- "jsonplaceholder.typicode.com"
+	  http:
+	  - timeout: 3s
+		route:
+		  - destination:
+			  host: "jsonplaceholder.typicode.com"
+			weight: 100
+		
+		
+ 33.  Run the following command to apply the virtual service resource:
+
+kubectl apply -f labs/05/typicode-vs.yaml -n istioinaction
